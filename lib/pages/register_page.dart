@@ -1,6 +1,6 @@
-// lib/pages/register_page.dart
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class RegisterPage extends StatefulWidget {
   const RegisterPage({super.key});
@@ -10,6 +10,7 @@ class RegisterPage extends StatefulWidget {
 }
 
 class _RegisterPageState extends State<RegisterPage> {
+  final _username = TextEditingController();
   final _email = TextEditingController();
   final _password = TextEditingController();
   final _confirm = TextEditingController();
@@ -18,6 +19,7 @@ class _RegisterPageState extends State<RegisterPage> {
 
   @override
   void dispose() {
+    _username.dispose();
     _email.dispose();
     _password.dispose();
     _confirm.dispose();
@@ -25,10 +27,15 @@ class _RegisterPageState extends State<RegisterPage> {
   }
 
   Future<void> _register() async {
+    final username = _username.text.trim();
     final email = _email.text.trim();
     final pass = _password.text;
     final conf = _confirm.text;
 
+    if (username.isEmpty) {
+      setState(() => _error = 'Please enter a username.');
+      return;
+    }
     if (pass.length < 6) {
       setState(() => _error = 'Password must be at least 6 characters.');
       return;
@@ -38,14 +45,34 @@ class _RegisterPageState extends State<RegisterPage> {
       return;
     }
 
-    setState(() { _loading = true; _error = null; });
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
     try {
-      await FirebaseAuth.instance.createUserWithEmailAndPassword(
-        email: email,
-        password: pass,
-      );
+      // Create user
+      UserCredential userCred = await FirebaseAuth.instance
+          .createUserWithEmailAndPassword(email: email, password: pass);
+
+      // Save username in Firestore
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userCred.user!.uid)
+          .set({
+        'username': username,
+        'email': email,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // Optional: send verification email
+      await FirebaseAuth.instance.currentUser?.sendEmailVerification();
+
+      // Sign out after registration
+      await FirebaseAuth.instance.signOut();
+
       if (!mounted) return;
-      Navigator.pushReplacementNamed(context, '/login');
+      Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
     } on FirebaseAuthException catch (e) {
       setState(() => _error = e.message);
     } finally {
@@ -61,10 +88,16 @@ class _RegisterPageState extends State<RegisterPage> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            if (_error != null) Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(_error!, style: const TextStyle(color: Colors.red)),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(_error!, style: const TextStyle(color: Colors.red)),
+              ),
+            TextField(
+              controller: _username,
+              decoration: const InputDecoration(labelText: 'Username'),
             ),
+            const SizedBox(height: 12),
             TextField(
               controller: _email,
               keyboardType: TextInputType.emailAddress,
@@ -85,12 +118,14 @@ class _RegisterPageState extends State<RegisterPage> {
             const SizedBox(height: 24),
             ElevatedButton(
               onPressed: _loading ? null : _register,
-              child: _loading ? const CircularProgressIndicator() : const Text('Create account'),
+              child: _loading
+                  ? const CircularProgressIndicator()
+                  : const Text('Create account'),
             ),
             const SizedBox(height: 12),
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text("Already have an account? Log in"),
+              child: const Text('Already have an account? Log in'),
             ),
           ],
         ),
